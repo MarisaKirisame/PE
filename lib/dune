@@ -1,2 +1,2 @@
 (library
-  (public_name PE))
+  (name PE))

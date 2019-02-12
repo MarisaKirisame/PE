@@ -1,5 +1,6 @@
+open PE.Common;;
 open Runcode;;
-
+let b = abc;;
 module type Lang = sig
   type 'a repr
   val lam_: ('a repr -> 'b repr) -> ('a -> 'b) repr
