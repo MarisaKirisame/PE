@@ -4,6 +4,7 @@ open Trx;;
 module type Lang = sig
   type 'a repr
   type 'a value = 'a repr
+  type 'a var = 'a repr
   val lam_: ('a value -> 'b repr) -> ('a -> 'b) repr
   val app_: ('a -> 'b) repr -> ('a repr -> 'b repr)
   val let_: 'a repr -> ('a value -> 'b repr) -> 'b repr
