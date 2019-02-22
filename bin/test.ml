@@ -67,8 +67,6 @@ and
   { pStatic: static option;
     dynVal: term }
 
-let fresh: int ref = ref 0
-
 type 'a env = var -> 'a
 
 let extend e (Var v) x =
