@@ -8,7 +8,7 @@ type term =
   | Abs of (var * term)
   | App of (term * term)
   | Let of (var * term * term)
-  | Int of int
+  | Float of float
   | Add of (term * term)
   | MkRef of term
   | GetRef of term
@@ -38,7 +38,7 @@ let push l x =
 
 type value =
   | VFun of (value -> value)
-  | VInt of int
+  | VFloat of float
   | VRef of value ref
   | VProd of value * value
   | VSum of (value, value) sum
@@ -57,7 +57,7 @@ type time = int
 type
   static =
   | SFun of (letList -> pValue -> pValue)
-  | SInt of int
+  | SFloat of float
   | SRef of (pValue * time) ref
   | SProd of pValue * pValue
   | SSum of (pValue, pValue) sum
@@ -81,7 +81,7 @@ let incTime x =
 
 let static s d = { pStatic = Some s; dynVal = d }
 
-let staticInt s = static (SInt s) (Int s)
+let staticFloat f = static (SFloat f) (Float f)
 
 let dynamic d = { pStatic = None; dynVal = d }
 
@@ -93,12 +93,12 @@ let rec peAux(curTime: time ref)(e: pValue env)(l : letList): term -> pValue =
     | _ -> incTime curTime; dynamic (push l (App (x.dynVal, y.dynVal)))
   in
   function
-  | Int i -> staticInt i
+  | Float f -> staticFloat f
   | Add (x, y) ->
     let px = recurse(x) in
     let py = recurse(y) in
     (match (px.pStatic, py.pStatic) with
-    | (Some (SInt x), Some (SInt y)) -> staticInt (x + y)
+    | (Some (SFloat x), Some (SFloat y)) -> staticFloat (x +. y)
     | _ -> dynamic (push l (Add (px.dynVal, py.dynVal))))
   | MkProd (x, y) ->
     let px = recurse(x) in
