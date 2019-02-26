@@ -3,23 +3,62 @@ open Trx;;
 
 type var = Var of int
 
+type 'a typeRep =
+  | FloatRep: float typeRep
+  | UnitRep: unit typeRep
+  | ArrowRep: ('a typeRep * 'b typeRep) -> ('a -> 'b) typeRep
+  | RefRep: 'a typeRep -> 'a ref typeRep
+  | SumRep: ('a typeRep * 'b typeRep) -> ('a, 'b) sum typeRep
+  | ProdRep: ('a typeRep * 'b typeRep) -> ('a * 'b) typeRep
+
+type 'a dynTypeAux = { useDynType: 't. 't typeRep -> 'a }
+type dynType = { extractType: 'a. ('a dynTypeAux) -> 'a }
+
+let makeDynType t = { extractType = fun dtx -> dtx.useDynType t }
+
+let typeRepEq(type a)(type b): (a typeRep * b typeRep) -> bool =
+  function
+  | (FloatRep, FloatRep) -> true
+  | (FloatRep, _) -> false
+  | (UnitRep, UnitRep) -> true
+  | (UnitRep, _) -> false
+  | (ArrowRep (a, b), ArrowRep (c, d)) -> typeRepEq (a, c) && typeRepEq (b, d)
+  | (ArrowRep _, _) -> false
+  | (RefRep a, RefRep b) -> typeRepEq (a, b)
+  | (RefRep _, _) -> false
+  | (SumRep (a, b), SumRep (c, d)) -> typeRepEq (a, c) && typeRepEq (b, d)
+  | (ProdRep (a, b), ProdRep (c, d)) -> typeRepEq (a, c) && typeRepEq (b, d)
+
 type term =
   | FromVar of var
-  | Abs of (var * term)
+  | Abs of (var * dynType * term)
   | App of (term * term)
   | Let of (var * term * term)
   | Float of float
   | Add of (term * term)
+  | Mult of (term * term)
   | MkRef of term
   | GetRef of term
   | SetRef of (term * term)
   | MkProd of (term * term)
   | Zro of term
   | Fst of term
-  | Left of term
-  | Right of term
+  | Left of (term * dynType)
+  | Right of (dynType * term)
   | Match of term * term * term
   | Unit
+
+type 'a env = var -> 'a
+
+let extend e (Var v) x =
+  function
+  | Var i when i == v -> x
+  | i -> e i
+
+let rec typeInfer (tyEnv: dynType env): term -> dynType =
+  function
+  | Unit -> makeDynType UnitRep
+  | Float _ -> makeDynType FloatRep
 
 let fresh = ref 0
 
@@ -69,13 +108,6 @@ and
 
 let fresh: int ref = ref 0
 
-type 'a env = var -> 'a
-
-let extend e (Var v) x =
-  function
-  | Var i when i == v -> x
-  | i -> e i
-
 let incTime x =
   x := (!x) + 1
 
@@ -100,6 +132,12 @@ let rec peAux(curTime: time ref)(e: pValue env)(l : letList): term -> pValue =
     (match (px.pStatic, py.pStatic) with
     | (Some (SFloat x), Some (SFloat y)) -> staticFloat (x +. y)
     | _ -> dynamic (push l (Add (px.dynVal, py.dynVal))))
+  | Mult (x, y) ->
+    let px = recurse(x) in
+    let py = recurse(y) in
+    (match (px.pStatic, py.pStatic) with
+     | (Some (SFloat x), Some (SFloat y)) -> staticFloat (x *. y)
+     | _ -> dynamic (push l (Mult (px.dynVal, py.dynVal))))
   | MkProd (x, y) ->
     let px = recurse(x) in
     let py = recurse(y) in
@@ -114,12 +152,12 @@ let rec peAux(curTime: time ref)(e: pValue env)(l : letList): term -> pValue =
     (match px.pStatic with
      | Some (SProd (_, y)) -> y
      | _ -> dynamic (push l (Fst (px.dynVal))))
-  | Left x ->
+  | Left (x, t) ->
     let px = recurse(x) in
-    static (SSum (Left px)) (push l (Left px.dynVal))
-  | Right x ->
+    static (SSum (Left px)) (push l (Left (px.dynVal, t)))
+  | Right (t, x) ->
     let px = recurse(x) in
-    static (SSum (Right px)) (push l (Right px.dynVal))
+    static (SSum (Right px)) (push l (Right (t, px.dynVal)))
   | App (f, x) ->
     let pf = recurse(f) in
     let px = recurse(x) in
@@ -150,8 +188,12 @@ let rec peAux(curTime: time ref)(e: pValue env)(l : letList): term -> pValue =
   | Unit -> static SUnit Unit
   | FromVar v -> e v
   | Let (var, v, body) -> peAux(curTime)(extend e var (recurse(v)))(l)(body)
-  | Abs e -> static (SFun (fun l p ->
-      { pStatic = p.pStatic; dynVal = push l p.dynVal })) (Abs e)
+  | Abs (v, t, b) ->
+    static
+      (SFun (fun l p ->
+           let res = peAux(curTime)(extend e v p)(l)(b) in
+           { pStatic = res.pStatic; dynVal = push l res.dynVal }))
+      (Abs (v, t, b))
 
 exception NotFound;;
 
@@ -163,3 +205,28 @@ let pe x =
     res = peAux(ref 0)(fun _ -> raise NotFound)(ll) x
   in
   (!ll) res.dynVal
+
+type dynCode = { extract : 'a . 'a typeRep -> 'a code }
+
+exception TypeError;;
+
+let dynFloat (f: float): dynCode =
+  let x (type ty) (t: ty typeRep) : ty code =
+    match t with
+    | FloatRep -> .<f>.
+    | _ -> raise TypeError
+  in
+  { extract = x }
+
+let dynUnit: dynCode =
+  let x (type ty) (t: ty typeRep) : ty code =
+    match t with
+    | UnitRep -> .<()>.
+    | _ -> raise TypeError
+  in
+  { extract = x }
+
+let rec compile: term -> dynCode =
+  function
+  | Float f -> dynFloat f
+  | Unit -> dynUnit
