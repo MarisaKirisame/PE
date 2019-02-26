@@ -16,7 +16,7 @@ type dynType = { extractType: 'a. ('a dynTypeAux) -> 'a }
 
 let makeDynType t = { extractType = fun dtx -> dtx.useDynType t }
 
-let typeRepEq(type a)(type b): (a typeRep * b typeRep) -> bool =
+let rec typeRepEq: type a b. (a typeRep * b typeRep) -> bool =
   function
   | (FloatRep, FloatRep) -> true
   | (FloatRep, _) -> false
@@ -27,7 +27,9 @@ let typeRepEq(type a)(type b): (a typeRep * b typeRep) -> bool =
   | (RefRep a, RefRep b) -> typeRepEq (a, b)
   | (RefRep _, _) -> false
   | (SumRep (a, b), SumRep (c, d)) -> typeRepEq (a, c) && typeRepEq (b, d)
+  | (SumRep _, _) -> false
   | (ProdRep (a, b), ProdRep (c, d)) -> typeRepEq (a, c) && typeRepEq (b, d)
+  | (ProdRep _, _) -> false
 
 type term =
   | FromVar of var
@@ -105,8 +107,6 @@ and
   pValue =
   { pStatic: static option;
     dynVal: term }
-
-let fresh: int ref = ref 0
 
 let incTime x =
   x := (!x) + 1
@@ -193,7 +193,7 @@ let rec peAux(curTime: time ref)(e: pValue env)(l : letList): term -> pValue =
       (SFun (fun l p ->
            let res = peAux(curTime)(extend e v p)(l)(b) in
            { pStatic = res.pStatic; dynVal = push l res.dynVal }))
-      (Abs (v, t, b))
+      (push l (Abs (v, t, b)))
 
 exception NotFound;;
 
