@@ -71,10 +71,12 @@ let genFresh() =
 
 type letList = (term -> term) ref
 
-let push l x =
+let pushVar l v x =
   let lv = !l in
-  let v = genFresh() in
-  l := (fun t -> lv(Let(v, x, t)));
+  l := (fun t -> lv(Let(v, x, t)))
+
+let push l x =
+  pushVar l (genFresh()) x;
   FromVar v
 
 type value =
@@ -118,7 +120,7 @@ let staticFloat f = static (SFloat f) (Float f)
 let dynamic d = { pStatic = None; dynVal = d }
 
 let rec peAux(curTime: time ref)(e: pValue env)(l : letList): term -> pValue =
-  let recurse = peAux curTime e l in
+  let recurse t = peAux curTime e l t in
   let app x y =
     match x.pStatic with
     | Some (SFun f) -> f l y
@@ -187,7 +189,10 @@ let rec peAux(curTime: time ref)(e: pValue env)(l : letList): term -> pValue =
     static SUnit Unit
   | Unit -> static SUnit Unit
   | FromVar v -> e v
-  | Let (var, v, body) -> peAux(curTime)(extend e var (recurse(v)))(l)(body)
+  | Let (var, v, body) ->
+    let pv = recurse(v) in
+    pushVar l var pv.dynVal;
+    peAux(curTime)(extend e var pv)(l)(body)
   | Abs (v, t, b) ->
     static
       (SFun (fun l p ->
@@ -230,3 +235,20 @@ let rec compile: term -> dynCode =
   function
   | Float f -> dynFloat f
   | Unit -> dynUnit
+
+let lam t f = let v = genFresh() in Abs (v, t, f (FromVar v))
+
+let let_ x f = let v = genFresh() in Let(v, x, f (FromVar v))
+
+let m2 =
+  let_
+    (lam (makeDynType FloatRep) (fun x -> Add (x, x)))
+    (fun dub -> (lam (makeDynType FloatRep) (fun x -> App (dub, x))))
+
+let m8 =
+  let_
+    (lam (makeDynType FloatRep) (fun x -> Add (x, x)))
+    (fun dub -> (lam (makeDynType FloatRep) (fun x -> App (dub, App (dub, App (dub, x))))))
+
+let pem2 = pe m2
+let m = staticFloat 1.0
