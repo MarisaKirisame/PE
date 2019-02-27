@@ -50,11 +50,11 @@ type term =
   | Match of term * term * term
   | Unit
 
-type 'a env = var -> 'a
+type 'a env = int -> 'a
 
-let extend e (Var v) x =
+let extend e v x =
   function
-  | Var i when i == v -> x
+  | i when i == v -> x
   | i -> e i
 
 let rec typeInfer (tyEnv: dynType env): term -> dynType =
@@ -62,12 +62,16 @@ let rec typeInfer (tyEnv: dynType env): term -> dynType =
   | Unit -> makeDynType UnitRep
   | Float _ -> makeDynType FloatRep
 
-let fresh = ref 0
+let genCounter() =
+  let cnt = ref 0 in
+  let gen() =
+    let ret = !cnt in
+    cnt := ret + 1;
+    ret
+  in
+  gen
 
-let genFresh() =
-  let ret = !fresh in
-  fresh := ret + 1;
-  Var ret
+let freshVar = genCounter()
 
 type letList = (term -> term) ref
 
@@ -76,7 +80,8 @@ let pushVar l v x =
   l := (fun t -> lv(Let(v, x, t)))
 
 let push l x =
-  pushVar l (genFresh()) x;
+  let v = Var(freshVar()) in
+  pushVar l v x;
   FromVar v
 
 type value =
@@ -88,20 +93,23 @@ type value =
   | VUnit
 
 (*Our partial evaluator has almost the same value as the ordinary evaluator.
-  the only problem is that reference environment might be touched by unknown SetRef/App,
-  so we have to modify it by keeping a time ref denoting the last time it was touched.
-  The static ref will include a timestamp denoting the last valid time.
+  the only problem is that reference has effect.
+
+  So we reify the store, making the partial evaluator take a ref of the store.
+  (It can also take store as input and pass one out ala state monad)
 
   Since duplication with effect is semantically incorrect, dynVal will hold only value.
   Computation must be pushed to a letList ref.
 *)
-type time = int
+let freshStoreId = genCounter()
+
+type storeId = StoreId of int
 
 type
   static =
   | SFun of (letList -> pValue -> pValue)
   | SFloat of float
-  | SRef of (pValue * time) ref
+  | SRef of storeId
   | SProd of pValue * pValue
   | SSum of (pValue, pValue) sum
   | SUnit
@@ -110,21 +118,25 @@ and
   { pStatic: static option;
     dynVal: term }
 
-let incTime x =
-  x := (!x) + 1
-
 let static s d = { pStatic = Some s; dynVal = d }
 
 let staticFloat f = static (SFloat f) (Float f)
 
 let dynamic d = { pStatic = None; dynVal = d }
 
-let rec peAux(curTime: time ref)(e: pValue env)(l : letList): term -> pValue =
-  let recurse t = peAux curTime e l t in
+let emptyStore = fun _ -> raise Not_found
+
+let withLetList f =
+  let l = ref (fun x -> x) in
+  let res = f l in
+  (!l) res
+
+let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pValue =
+  let recurse t = peAux curStore e l t in
   let app x y =
     match x.pStatic with
     | Some (SFun f) -> f l y
-    | _ -> incTime curTime; dynamic (push l (App (x.dynVal, y.dynVal)))
+    | _ -> curStore := emptyStore; dynamic (push l (App (x.dynVal, y.dynVal)))
   in
   function
   | Float f -> staticFloat f
@@ -171,45 +183,43 @@ let rec peAux(curTime: time ref)(e: pValue env)(l : letList): term -> pValue =
     (match ps.pStatic with
     | (Some (SSum (Left x))) -> app pl x
     | (Some (SSum (Right x))) -> app pr x
-    | _ -> incTime curTime; dynamic (push l (Match (ps.dynVal, pl.dynVal, pr.dynVal))))
+    | _ ->
+      curStore := emptyStore;
+      dynamic (push l (Match (ps.dynVal, pl.dynVal, pr.dynVal))))
   | MkRef x ->
     let px = recurse(x) in
-    static (SRef (ref (px, !curTime))) (push l (MkRef px.dynVal))
+    static (SRef (StoreId (freshStoreId()))) (push l (MkRef px.dynVal))
   | GetRef r ->
     let pr = recurse(r) in
-    (match pr.pStatic with
-     | Some (SRef { contents = (px, time) }) when !curTime == time -> px
-     | _ -> dynamic (push l (GetRef pr.dynVal)) )
-  | SetRef (r, v) ->
+    (try (match pr.pStatic with
+        | Some (SRef (StoreId s)) -> (!curStore) s
+        | _ -> raise Not_found)
+    with _ -> dynamic (push l (GetRef pr.dynVal)))
+ | SetRef (r, v) ->
     let pr = recurse(r) in
     let pv = recurse(v) in
     (match pr.pStatic with
-     | Some (SRef r) -> r := (pv, !curTime)
-     | _ -> let _ = push l (SetRef (pr.dynVal, pv.dynVal)) in incTime curTime);
+     | Some (SRef (StoreId s)) -> curStore := extend (!curStore) s pv
+     | _ -> let _ = push l (SetRef (pr.dynVal, pv.dynVal)) in curStore := emptyStore);
     static SUnit Unit
   | Unit -> static SUnit Unit
-  | FromVar v -> e v
-  | Let (var, v, body) ->
+  | FromVar (Var v) -> e v
+  | Let ((Var var), v, body) ->
     let pv = recurse(v) in
-    pushVar l var pv.dynVal;
-    peAux(curTime)(extend e var pv)(l)(body)
-  | Abs (v, t, b) ->
+    pushVar l (Var var) pv.dynVal;
+    peAux(curStore)(extend e var pv)(l)(body)
+  | Abs ((Var v), t, b) ->
     static
-      (SFun (fun l p ->
-           let res = peAux(curTime)(extend e v p)(l)(b) in
-           { pStatic = res.pStatic; dynVal = push l res.dynVal }))
-      (push l (Abs (v, t, b)))
+      (SFun (fun l p -> peAux(curStore)(extend e v p)(l)(b)))
+      (push l (Abs ((Var v), t,
+                    withLetList (fun l ->
+                        (peAux
+                          curStore
+                          (extend e v (dynamic (FromVar (Var v))))
+                          l
+                          b).dynVal))))
 
-exception NotFound;;
-
-let pe x =
-  let
-    ll = ref (fun x -> x)
-  in
-  let
-    res = peAux(ref 0)(fun _ -> raise NotFound)(ll) x
-  in
-  (!ll) res.dynVal
+let pe x = withLetList (fun l -> (peAux (ref emptyStore) emptyStore l x).dynVal)
 
 type dynCode = { extract : 'a . 'a typeRep -> 'a code }
 
@@ -236,9 +246,9 @@ let rec compile: term -> dynCode =
   | Float f -> dynFloat f
   | Unit -> dynUnit
 
-let lam t f = let v = genFresh() in Abs (v, t, f (FromVar v))
+let lam t f = let v = Var (freshVar()) in Abs (v, t, f (FromVar v))
 
-let let_ x f = let v = genFresh() in Let(v, x, f (FromVar v))
+let let_ x f = let v = Var (freshVar()) in Let(v, x, f (FromVar v))
 
 let m2 =
   let_
@@ -251,4 +261,4 @@ let m8 =
     (fun dub -> (lam (makeDynType FloatRep) (fun x -> App (dub, App (dub, App (dub, x))))))
 
 let pem2 = pe m2
-let m = staticFloat 1.0
+let pem8 = pe m8
