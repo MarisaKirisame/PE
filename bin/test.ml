@@ -214,10 +214,10 @@ let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pVa
       (push l (Abs ((Var v), t,
                     withLetList (fun l ->
                         (peAux
-                          curStore
-                          (extend e v (dynamic (FromVar (Var v))))
-                          l
-                          b).dynVal))))
+                           (ref (!curStore))
+                           (extend e v (dynamic (FromVar (Var v))))
+                           l
+                           b).dynVal))))
 
 let pe x = withLetList (fun l -> (peAux (ref emptyStore) emptyStore l x).dynVal)
 
