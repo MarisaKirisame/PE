@@ -353,3 +353,13 @@ let ad i e =
                          (seq (App (GetRef bp, Unit))
                             (MkProd (Zro res,
                                      hList (List.map (fun x -> GetRef (Fst x)) l)))))))))
+
+let sad = ad 1 (lam (makeDynType FloatRep) (fun x -> Mult (x, x)))
+
+(* After some manual inspection, this does indeed fuse away reference and closure.
+ * However it generate tons of unused binding,
+ * which can be removed by dead code elimination.
+ * Note that escape analysis is needed to remove some dead code,
+ * as they might update a dead reference.
+ *)
+let pesad = pe sad
