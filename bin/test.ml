@@ -313,3 +313,43 @@ let rec adAux bp = function
                      (seq (addGrad (Fst lad) (Mult (Zro rad, GetRef g)))
                         (addGrad (Fst rad) (Mult (Zro lad, GetRef g)))))
                   (MkProd (Mult (Zro lad, Zro rad), g)))))
+
+let rec multiAbs i t f =
+  if i = 0
+  then f []
+  else
+    let v = Var (freshVar()) in
+    Abs (v, t, multiAbs (i - 1) t (fun x -> f (FromVar v :: x)))
+
+let rec multiLet l f =
+  match l with
+  | [] -> f []
+  | x :: xs ->
+    let v = Var (freshVar()) in
+    Let (v, x, multiLet xs (fun l -> f (FromVar v :: l)))
+
+let rec multiApp f x =
+  match x with
+  | [] -> f
+  | x :: xs -> multiApp (App (f, x)) xs
+
+let rec hList =
+  function
+  | [] -> Unit
+  | x :: xs -> MkProd (x, hList xs)
+
+let initBp = MkRef (lam (makeDynType UnitRep) (fun _ -> Unit))
+
+let ad i e =
+  multiAbs
+    i
+    (makeDynType FloatRep)
+    (fun l ->
+       let_ initBp
+         (fun bp -> let_ (adAux bp e)
+             (fun ade -> multiLet (List.map (fun x -> MkProd (x, MkRef (Float 0.0))) l)
+                 (fun l -> let_ (multiApp ade l)
+                     (fun res -> seq (SetRef (Fst res, Float 1.0))
+                         (seq (App (GetRef bp, Unit))
+                            (MkProd (Zro res,
+                                     hList (List.map (fun x -> GetRef (Fst x)) l)))))))))
