@@ -248,7 +248,7 @@ let rec compile: term -> dynCode =
 
 let lam t f = let v = Var (freshVar()) in Abs (v, t, f (FromVar v))
 
-let let_ x f = let v = Var (freshVar()) in Let(v, x, f (FromVar v))
+let let_ x f = let v = Var (freshVar()) in Let (v, x, f (FromVar v))
 
 let m2 =
   let_
@@ -262,3 +262,54 @@ let m8 =
 
 let pem2 = pe m2
 let pem8 = pe m8
+
+(*fix later*)
+let adType t = t
+
+let seq l r =
+  let_ l (fun _ -> r)
+
+let addGrad g f =
+  let_ g (fun g -> SetRef (g, Add (GetRef g, f)))
+
+let updateBp bp action =
+  let_
+    (GetRef bp)
+    (fun bpv -> (SetRef (bp,
+                         lam (makeDynType UnitRep)
+                           (fun _ -> seq action (App(bp, Unit))))))
+
+let rec adAux bp = function
+  | Unit -> Unit
+  | Zro e -> Zro (adAux bp e)
+  | Fst e -> Fst (adAux bp e)
+  | MkProd (l, r) -> MkProd (adAux bp l, adAux bp r)
+  | Left (e, t) -> Left (adAux bp e, adType t)
+  | Right (t, e) -> Right (adType t, adAux bp e)
+  | FromVar v -> FromVar v
+  | App (f, x) -> App (adAux bp f, adAux bp x)
+  | GetRef r -> GetRef (adAux bp r)
+  | SetRef (r, v) -> SetRef (adAux bp r, adAux bp v)
+  | MkRef e -> MkRef (adAux bp e)
+  | Let (var, v, body) -> Let (var, adAux bp v, adAux bp body)
+  | Abs (v, t, body) -> Abs (v, t, adAux bp body)
+  | Match (s, l, r) -> Match (adAux bp s, adAux bp l, adAux bp r)
+  | Float f -> MkProd (Float f, MkRef (Float 0.))
+  | Add (l, r) ->
+    let_ (adAux bp l)
+      (fun lad -> let_ (adAux bp r)
+          (fun rad -> let_ (MkRef (Float 0.))
+              (fun g -> seq
+                  (updateBp bp
+                     (seq (addGrad (Fst lad) (GetRef g))
+                        (addGrad (Fst rad) (GetRef g))))
+                  (MkProd (Add (Zro lad, Zro rad), g)))))
+  | Mult (l, r) ->
+    let_ (adAux bp l)
+      (fun lad -> let_ (adAux bp r)
+          (fun rad -> let_ (MkRef (Float 0.))
+              (fun g -> seq
+                  (updateBp bp
+                     (seq (addGrad (Fst lad) (Mult (Zro rad, GetRef g)))
+                        (addGrad (Fst rad) (Mult (Zro lad, GetRef g)))))
+                  (MkProd (Mult (Zro lad, Zro rad), g)))))
