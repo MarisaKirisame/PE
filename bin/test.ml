@@ -358,6 +358,10 @@ let ad i e =
                             (MkProd (Zro res,
                                      hList (List.map (fun x -> GetRef (Fst x)) l)))))))))
 
+let iad = ad 1 (lam (makeDynType FloatRep) (fun x -> x))
+
+let peiad = pe iad
+
 let sad = ad 1 (lam (makeDynType FloatRep) (fun x -> Mult (x, x)))
 
 (* After some manual inspection, this does indeed fuse away reference and closure.
