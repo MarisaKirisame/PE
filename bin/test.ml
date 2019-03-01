@@ -223,6 +223,8 @@ let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pVa
 
 let pe x = withLetList (fun l -> (peAux (ref emptyStore) emptyStore l x).dynVal)
 
+let peref = pe (GetRef (MkRef (Float 1.0)))
+
 type dynCode = { extract : 'a . 'a typeRep -> 'a code }
 
 exception TypeError;;
