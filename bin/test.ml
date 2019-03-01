@@ -188,7 +188,9 @@ let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pVa
       dynamic (push l (Match (ps.dynVal, pl.dynVal, pr.dynVal))))
   | MkRef x ->
     let px = recurse(x) in
-    static (SRef (StoreId (freshStoreId()))) (push l (MkRef px.dynVal))
+    let id = freshStoreId() in
+    curStore := extend (!curStore) id px;
+    static (SRef (StoreId id)) (push l (MkRef px.dynVal))
   | GetRef r ->
     let pr = recurse(r) in
     (try (match pr.pStatic with
