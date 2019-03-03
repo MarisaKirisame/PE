@@ -200,9 +200,10 @@ let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pVa
  | SetRef (r, v) ->
     let pr = recurse(r) in
     let pv = recurse(v) in
+    let _ = push l (SetRef (pr.dynVal, pv.dynVal)) in
     (match pr.pStatic with
      | Some (SRef (StoreId s)) -> curStore := extend (!curStore) s pv
-     | _ -> let _ = push l (SetRef (pr.dynVal, pv.dynVal)) in curStore := emptyStore);
+     | _ -> curStore := emptyStore);
     static SUnit Unit
   | Unit -> static SUnit Unit
   | FromVar (Var v) -> e v
