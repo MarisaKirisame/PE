@@ -1,5 +1,7 @@
 open PE.Common;;
 open Trx;;
+open Format;;
+open Lazy;;
 
 type var = Var of int
 
@@ -49,6 +51,44 @@ type term =
   | Right of (dynType * term)
   | Match of term * term * term
   | Unit
+
+let print_var pp = function
+  | Var i -> pp_print_string pp "x"; pp_print_int pp i
+
+let print_bracket pp cont = pp_print_string pp "("; force cont; pp_print_string pp ")"
+
+let rec print_term pp =
+  let p_term t = print_term pp t in
+  let p_bracket cont = print_bracket pp cont in
+  let p_string str = pp_print_string pp str in
+  let p_var v = print_var pp v in
+  let p_space () = pp_print_space pp () in
+  let k str = p_string str in
+  let sk str = p_space (); p_string str in
+  let ks str = p_string str; p_space () in
+  let sks str = p_space (); p_string str; p_space () in
+  function
+  | Unit -> pp_print_string pp "()"
+  | Float f -> pp_print_float pp f
+  | FromVar v -> p_var v
+  | Abs (v, _, t) -> p_bracket (lazy (p_string "\\"; p_var v; sks "->"; p_term t))
+  | App (f, x) -> p_bracket (lazy (p_term f; p_space (); p_term x))
+  | Let (var, v, b) -> p_bracket (lazy (
+      ks "let"; p_var var; sks "=";
+      p_term v; sks "in"; p_term b))
+  | Add (l, r) -> p_bracket (lazy (p_term l; sks "+"; p_term r))
+  | Mult (l, r) -> p_bracket (lazy (p_term l; sks "*"; p_term r))
+  | MkRef r -> p_bracket (lazy (ks "ref"; p_term r))
+  | MkProd (l, r) -> p_bracket (lazy (p_term l; ks ","; p_term r))
+  | Zro e -> p_bracket (lazy (p_term e; k ".0"))
+  | Fst e -> p_bracket (lazy (p_term e; k ".1"))
+  | GetRef e -> p_bracket (lazy (k "!"; p_term e))
+  | SetRef (r, v) -> p_bracket (lazy (p_term r; sks ":="; p_term v))
+  | Left (x, _) -> p_bracket (lazy (ks "left"; p_term x))
+  | Right (_, y) -> p_bracket (lazy (ks "right"; p_term y))
+  | Match (s, l, r) -> p_bracket (lazy (ks "match"; p_term s; p_space(); p_term l; p_space(); p_term r));;
+
+#install_printer print_term;;
 
 type 'a env = int -> 'a
 
@@ -196,14 +236,14 @@ let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pVa
     (try (match pr.pStatic with
         | Some (SRef (StoreId s)) -> (!curStore) s
         | _ -> raise Not_found)
-    with _ -> dynamic (push l (GetRef pr.dynVal)))
- | SetRef (r, v) ->
+     with _ -> print_string "get_ref_fail"; print_space(); print_term Format.std_formatter pr.dynVal; print_space(); dynamic (push l (GetRef pr.dynVal)))
+  | SetRef (r, v) ->
     let pr = recurse(r) in
     let pv = recurse(v) in
     let _ = push l (SetRef (pr.dynVal, pv.dynVal)) in
     (match pr.pStatic with
      | Some (SRef (StoreId s)) -> curStore := extend (!curStore) s pv
-     | _ -> curStore := emptyStore);
+     | _ -> print_string "set_ref_fail"; print_space(); print_term Format.std_formatter pr.dynVal; print_space(); curStore := emptyStore);
     static SUnit Unit
   | Unit -> static SUnit Unit
   | FromVar (Var v) -> e v
@@ -223,6 +263,36 @@ let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pVa
                            b).dynVal))))
 
 let pe x = withLetList (fun l -> (peAux (ref emptyStore) emptyStore l x).dynVal)
+
+let rec wellform_aux (set: int -> bool) =
+  let bind (Var v) e =
+    if set v
+    then false
+    else wellform_aux (fun i -> if i == v then true else set v) e in
+  function
+  | FromVar _ -> true
+  | Unit -> true
+  | Float _ -> true
+  | Add (l, r) -> wellform_aux set l && wellform_aux set r
+  | Mult (l, r) -> wellform_aux set l && wellform_aux set r
+  | MkRef e -> wellform_aux set e
+  | GetRef e -> wellform_aux set e
+  | SetRef (r, e) -> wellform_aux set r && wellform_aux set e
+  | Zro e -> wellform_aux set e
+  | Fst e -> wellform_aux set e
+  | MkProd (l, r) -> wellform_aux set l && wellform_aux set r
+  | Left (e, _) -> wellform_aux set e
+  | Right (_, e) -> wellform_aux set e
+  | Match (s, l, r) -> wellform_aux set s && wellform_aux set l && wellform_aux set r
+  | App (f, x) -> wellform_aux set f && wellform_aux set x
+  | Abs (v, _, b) -> bind v b
+  | Let (v, _, b) -> bind v b
+
+let wellform = wellform_aux (fun _ -> false)
+
+let false =
+  let v = Var (freshVar()) in
+  wellform (Let (v, Unit, Let (v, Unit, FromVar v)))
 
 let peref = pe (GetRef (MkRef (Float 1.0)))
 
@@ -282,7 +352,7 @@ let updateBp bp action =
     (GetRef bp)
     (fun bpv -> (SetRef (bp,
                          lam (makeDynType UnitRep)
-                           (fun _ -> seq action (App(bp, Unit))))))
+                           (fun _ -> seq action (App(bpv, Unit))))))
 
 let rec adAux bp = function
   | Unit -> Unit
