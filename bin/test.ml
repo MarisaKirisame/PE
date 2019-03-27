@@ -236,14 +236,14 @@ let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pVa
     (try (match pr.pStatic with
         | Some (SRef (StoreId s)) -> (!curStore) s
         | _ -> raise Not_found)
-     with _ -> print_string "get_ref_fail"; print_space(); print_term Format.std_formatter pr.dynVal; print_space(); dynamic (push l (GetRef pr.dynVal)))
+     with _ -> dynamic (push l (GetRef pr.dynVal)))
   | SetRef (r, v) ->
     let pr = recurse(r) in
     let pv = recurse(v) in
     let _ = push l (SetRef (pr.dynVal, pv.dynVal)) in
     (match pr.pStatic with
      | Some (SRef (StoreId s)) -> curStore := extend (!curStore) s pv
-     | _ -> print_string "set_ref_fail"; print_space(); print_term Format.std_formatter pr.dynVal; print_space(); curStore := emptyStore);
+     | _ -> curStore := emptyStore);
     static SUnit Unit
   | Unit -> static SUnit Unit
   | FromVar (Var v) -> e v
@@ -257,7 +257,7 @@ let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pVa
       (push l (Abs ((Var v), t,
                     withLetList (fun l ->
                         (peAux
-                           (ref (!curStore))
+                           (ref (emptyStore))
                            (extend e v (dynamic (FromVar (Var v))))
                            l
                            b).dynVal))))
