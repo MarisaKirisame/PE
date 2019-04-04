@@ -51,7 +51,6 @@ type value =
   | SInt of int
   | VRef of value ref
   | VProd of value * value
-  | VSum of (value, value) sum
   | VUnit
 
 let freshStoreId = genCounter()
@@ -64,7 +63,6 @@ type
   | SInt of int
   | SRef of storeId
   | SProd of pValue * pValue
-  | SSum of (pValue, pValue) sum
   | SUnit
 and
   pValue =
@@ -163,8 +161,11 @@ let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pVa
     match pi.pStatic with
     | Some (SInt 0) -> recurse(z)
     | Some (SInt _) -> recurse(nz)
-    | _ -> dynamic (push l (IfZero (pi.dynVal,
-                                    (peAux (ref emptyStore) e l z).dynVal,
-                                    (peAux (ref emptyStore) e l nz).dynVal)))
+    | _ ->
+      let res = (dynamic (push l (IfZero (pi.dynVal,
+                                          (peAux (ref (!curStore)) e l z).dynVal,
+                                          (peAux (ref (!curStore)) e l nz).dynVal))))
+      in
+      curStore := emptyStore; res
 
 let pe x = withLetList (fun l -> (peAux (ref emptyStore) emptyStore l x).dynVal)
