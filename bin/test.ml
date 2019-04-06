@@ -221,11 +221,11 @@ let rec peAux(curStore: pValue env ref)(e: pValue env)(l : letList): term -> pVa
     let pl = recurse(lcase) in
     let pr = recurse(rcase) in
     (match ps.pStatic with
-    | (Some (SSum (Left x))) -> app pl x
-    | (Some (SSum (Right x))) -> app pr x
-    | _ ->
-      curStore := emptyStore;
-      dynamic (push l (Match (ps.dynVal, pl.dynVal, pr.dynVal))))
+     | (Some (SSum (Left x))) -> app pl x
+     | (Some (SSum (Right x))) -> app pr x
+     | _ ->
+       curStore := emptyStore;
+       dynamic (push l (Match (ps.dynVal, pl.dynVal, pr.dynVal))))
   | MkRef x ->
     let px = recurse(x) in
     let id = freshStoreId() in
